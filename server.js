@@ -143,5 +143,5 @@ function updateUserLists(userId, socket) {
     socket.emit('sync-all', { convos: users[userId].convos, requests: friendRequests[userId] });
 }
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`🚀 SNAPCHAT LOCAL ENGINE RUNNING: http://localhost:${PORT}`));
