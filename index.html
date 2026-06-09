@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SnapClone: Node Server Edition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { background-color: #FFFC00; font-family: 'Helvetica Neue', sans-serif; height: 100vh; width: 100vw; overflow: hidden; margin: 0; display: flex; align-items: center; justify-content: center; }
+        .hidden { display: none !important; }
+        .snap-shadow { box-shadow: 0px 10px 40px rgba(0,0,0,0.12); }
+        #chat-messages { height: 100%; overflow-y: auto; scroll-behavior: smooth; display: flex; flex-direction: column; gap: 10px; }
+        .message-bubble { position: relative; max-w: 75%; padding: 12px; border-radius: 20px; font-weight: 500; font-size: 14px; width: fit-content; }
+        .message-bubble-me { background-color: #007AFF; color: white; border-bottom-right-radius: 4px; align-self: flex-end; }
+        .message-bubble-them { background-color: #F2F2F7; color: black; border-bottom-left-radius: 4px; align-self: flex-start; }
+        .img-preview { max-width: 100%; border-radius: 15px; margin-top: 8px; cursor: pointer; }
+        #local-video-call { position: absolute; top: 16px; right: 16px; width: 100px; height: 150px; border-radius: 12px; border: 2px solid white; transform: scaleX(-1); object-fit: cover; z-index: 50; }
+        #remote-video-call { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 24px; object-fit: cover; background: #222; z-index: 40; }
+        .filter-sepia { filter: sepia(100%); }
+        .filter-grayscale { filter: grayscale(100%); }
+    </style>
+</head>
+<body>
+
+    <div id="auth-screen" class="w-full max-w-sm p-6 text-center">
+        <img src="https://upload.wikimedia.org/wikipedia/en/thumb/c/c4/Snapchat_logo.svg/1200px-Snapchat_logo.svg.png" class="w-20 mx-auto mb-6">
+        <div class="bg-white p-10 rounded-[40px] snap-shadow space-y-4">
+            <input id="auth-name" type="text" placeholder="Display Name (New Users Only)" class="w-full p-4 bg-gray-100 rounded-2xl outline-none">
+            <input id="auth-id" type="text" placeholder="Public ID" class="w-full p-4 bg-gray-100 rounded-2xl outline-none uppercase">
+            <input id="auth-pass" type="password" placeholder="Password" class="w-full p-4 bg-gray-100 rounded-2xl outline-none">
+            <button onclick="handleAuth()" class="w-full bg-blue-500 text-white font-black py-4 rounded-2xl text-lg active:scale-95 transition">Enter App</button>
+        </div>
+    </div>
+
+    <div id="main-app" class="hidden w-full max-w-6xl h-[95vh] flex overflow-hidden p-4 gap-4 relative">
+        
+        <div class="w-80 flex flex-col bg-white rounded-[30px] shadow-lg shrink-0">
+            <div class="p-6 border-b flex justify-between items-center bg-gray-50 rounded-t-[30px]">
+                <div class="flex items-center gap-3">
+                    <img id="avatar-img" class="w-12 h-12 rounded-full object-cover bg-gray-200" src="https://www.w3schools.com/howto/img_avatar.png">
+                    <div>
+                        <h2 id="my-name-display" class="font-black text-lg truncate w-24">Name</h2>
+                        <p class="text-[10px] text-green-500 font-bold uppercase">Node Link Active</p>
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="openGroupModal()" class="bg-green-500 p-2.5 rounded-full text-white text-sm active:scale-90 transition">👥</button>
+                    <button onclick="toggleProfileModal()" class="text-2xl active:scale-90 transition">🔑</button>
+                </div>
+            </div>
+
+            <div class="p-4 flex-1 flex flex-col overflow-hidden">
+                <button onclick="switchView('snaps')" class="w-full bg-black text-white font-black py-4 rounded-2xl mb-4 shadow-lg flex items-center justify-center gap-2 hover:bg-gray-800 transition">
+                    📸 Open Camera
+                </button>
+
+                <div class="flex gap-2 mb-4">
+                    <input id="friend-input" type="text" placeholder="Search by ID..." class="flex-1 p-2.5 bg-gray-100 rounded-xl text-sm uppercase outline-none">
+                    <button onclick="sendFriendRequest()" class="bg-blue-500 text-white px-3.5 rounded-xl font-bold">+</button>
+                </div>
+
+                <div id="requests-area" class="mb-4 space-y-2"></div>
+                <h3 class="text-[11px] font-black text-gray-400 uppercase mb-3 tracking-widest px-2">Conversations</h3>
+                <div id="convo-list" class="space-y-1.5 flex-1 overflow-y-auto"></div>
+            </div>
+        </div>
+
+        <div id="chat-view" class="flex-1 flex flex-col bg-white rounded-[30px] shadow-lg min-w-0 relative">
+            
+            <div id="video-call-overlay" class="hidden absolute inset-0 bg-black rounded-[30px] z-30 overflow-hidden">
+                <video id="local-video-call" autoplay playsinline muted></video>
+                <video id="remote-video-call" autoplay playsinline></video>
+                <button onclick="endCall()" class="absolute bottom-6 left-1/2 -translate-x-1/2 bg-red-500 text-white px-8 py-3 rounded-full font-black z-50 shadow-xl active:scale-95 transition">🔴 End Call</button>
+            </div>
+
+            <div class="p-6 border-b flex justify-between items-center bg-gray-50 rounded-t-[30px]">
+                <h2 id="chat-header-title" class="font-black text-2xl truncate">Global Chat</h2>
+                <div id="chat-actions" class="hidden flex gap-2">
+                    <button onclick="startCall()" class="bg-blue-500 text-white px-5 py-2.5 rounded-full font-bold text-xs hover:bg-blue-600 transition">📞 Start Video Call</button>
+                </div>
+            </div>
+            
+            <div class="flex-1 p-6 overflow-hidden relative">
+                <div id="chat-messages" class="absolute inset-0 p-6 overflow-y-auto"></div>
+            </div>
+
+            <div class="p-5 border-t flex flex-col gap-2 bg-gray-50 rounded-b-[30px]">
+                <div class="flex gap-3 items-center">
+                    <button onclick="document.getElementById('img-upload').click()" class="text-2xl active:scale-90 transition">🖼️</button>
+                    <input type="file" id="img-upload" class="hidden" accept="image/*" onchange="sendPicture(this)">
+                    <input id="msg-input" type="text" placeholder="Type a message..." class="flex-1 bg-white border p-4 rounded-full outline-none font-medium shadow-sm">
+                    <button onclick="sendMessage()" class="bg-blue-500 text-white w-14 h-14 rounded-full flex items-center justify-center font-black shadow-md">➔</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="snaps-view" class="hidden flex-1 flex flex-col bg-black rounded-[30px] shadow-lg relative overflow-hidden">
+            <button onclick="switchView('chat')" class="absolute top-6 left-6 z-20 bg-white/20 text-white backdrop-blur-md px-4 py-2 rounded-full font-bold hover:bg-white/40">✕ Close Camera</button>
+            <div class="absolute top-6 right-6 z-20 text-white font-bold bg-black/50 px-4 py-2 rounded-full">
+                Target: <span id="snap-target-name" class="text-blue-400">Global Chat</span>
+            </div>
+            
+            <video id="camera-preview" autoplay playsinline muted class="w-full h-full object-cover"></video>
+            <canvas id="snapshot-canvas" class="hidden"></canvas>
+            
+            <div class="absolute bottom-10 left-1/2 -translate-x-1/2 flex items-center gap-6 z-10 bg-black/40 backdrop-blur-md p-4 rounded-full">
+                <button onclick="applyFilter('sepia')" class="w-12 h-12 bg-orange-100 text-orange-800 rounded-full font-bold text-xs">Sepia</button>
+                <button id="take-snap-btn" onclick="takeSnapshot()" class="w-20 h-20 bg-white rounded-full border-8 border-gray-300 shadow-2xl active:scale-95 transition"></button>
+                <button onclick="applyFilter('grayscale')" class="w-12 h-12 bg-gray-200 text-gray-800 rounded-full font-bold text-xs">B&W</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="group-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-[2000] p-6">
+        <div class="bg-white p-8 rounded-[30px] w-96 max-w-full">
+            <h2 class="font-black text-2xl mb-4">Create Group</h2>
+            <input id="group-name-input" type="text" placeholder="Group Name" class="w-full p-3 bg-gray-100 rounded-xl mb-4 outline-none">
+            <div id="group-friend-selector" class="max-h-40 overflow-y-auto border rounded-xl p-2 mb-4 space-y-2"></div>
+            <div class="flex gap-2">
+                <button onclick="createGroup()" class="flex-1 bg-green-500 text-white py-3 rounded-xl font-bold">Create</button>
+                <button onclick="closeGroupModal()" class="flex-1 bg-gray-200 py-3 rounded-xl font-bold">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="profile-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[2000] p-6">
+        <div class="bg-white p-8 rounded-[30px] w-96 max-w-full text-center">
+            <h2 class="font-black text-2xl mb-5">My Profile</h2>
+            <img id="modal-avatar-img" class="w-20 h-20 rounded-full object-cover mx-auto mb-3" src="https://www.w3schools.com/howto/img_avatar.png">
+            <button onclick="document.getElementById('profile-pic-upload').click()" class="text-xs font-bold text-blue-500 mb-6 bg-blue-50 px-3 py-1 rounded-full">Change Picture</button>
+            <input type="file" id="profile-pic-upload" class="hidden" accept="image/*" onchange="uploadProfilePic(this)">
+            <p class="text-gray-400 text-xs font-bold uppercase">Public ID</p>
+            <div id="modal-public-id" class="text-xl font-black mb-6 uppercase">---</div>
+            <button onclick="toggleProfileModal()" class="w-full bg-black text-white py-3 rounded-xl font-bold">Close</button>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let currentUser = null;
+        let activeRoom = 'global';
+        let friendsListCache = {};
+        let localStream = null;
+        let currentPeerCall = null;
+        let peer = null;
+
+        // AUTHENTICATION LOGIC
+        function handleAuth() {
+            const name = document.getElementById('auth-name').value;
+            const id = document.getElementById('auth-id').value.trim().toLowerCase();
+            const pass = document.getElementById('auth-pass').value;
+            if(!id || !pass) return alert("Fill out credentials!");
+            socket.emit('auth', { id, name: name || id, pass });
+        }
+
+        socket.on('auth-success', ({ user, globalMessages }) => {
+            currentUser = user;
+            document.getElementById('auth-screen').classList.add('hidden');
+            document.getElementById('main-app').classList.remove('hidden');
+            
+            // Start PeerJS using the exact unique username ID as the network coordinate
+            peer = new Peer(currentUser.id);
+            setupPeerListeners();
+
+            updateNavbarUI();
+            renderChatHistory(globalMessages);
+        });
+
+        socket.on('auth-failure', (msg) => alert(msg));
+        socket.on('alert', (msg) => alert(msg));
+
+        function updateNavbarUI() {
+            const defPic = 'https://www.w3schools.com/howto/img_avatar.png';
+            document.getElementById('avatar-img').src = currentUser.profilePic || defPic;
+            document.getElementById('modal-avatar-img').src = currentUser.profilePic || defPic;
+            document.getElementById('my-name-display').innerText = currentUser.name;
+            document.getElementById('modal-public-id').innerText = currentUser.id.toUpperCase();
+        }
+
+        function uploadProfilePic(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                socket.emit('update-avatar', reader.result);
+            };
+            reader.readAsDataURL(file);
+        }
+        socket.on('avatar-updated', (url) => {
+            currentUser.profilePic = url;
+            updateNavbarUI();
+        });
+
+        // CHAT INTERACTION LOGIC
+        function loadRoom(roomId, roomName) {
+            activeRoom = roomId;
+            document.getElementById('chat-header-title').innerText = roomName;
+            
+            if (roomId === 'global' || roomId.startsWith('group_')) {
+                document.getElementById('chat-actions').classList.add('hidden');
+            } else {
+                document.getElementById('chat-actions').classList.remove('hidden');
+            }
+            document.getElementById('chat-messages').innerHTML = "";
+            socket.emit('join-room', roomId);
+        }
+
+        socket.on('room-history', (history) => renderChatHistory(history));
+        socket.on('new-msg', (msg) => appendMessageBubble(msg));
+
+        function renderChatHistory(history) {
+            const box = document.getElementById('chat-messages');
+            box.innerHTML = "";
+            history.forEach(m => appendMessageBubble(m));
+        }
+
+        function appendMessageBubble(m) {
+            const box = document.getElementById('chat-messages');
+            const isMe = m.sid === currentUser.id;
+            const div = document.createElement('div');
+            div.className = `message-bubble ${isMe ? 'message-bubble-me' : 'message-bubble-them'} shadow-sm`;
+            div.innerHTML = `
+                <p class="text-[9px] font-black uppercase opacity-60 mb-1">${m.sname}</p>
+                ${m.txt ? `<p>${m.txt}</p>` : ''}
+                ${m.img ? `<img src="${m.img}" class="img-preview" onclick="window.open('${m.img}')">` : ''}
+            `;
+            box.appendChild(div);
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('msg-input');
+            if(!input.value.trim()) return;
+            socket.emit('send-msg', { roomId: activeRoom, txt: input.value });
+            input.value = "";
+        }
+
+        function sendPicture(input) {
+            const file = input.files[0];
+            if(!file) return;
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                socket.emit('send-msg', { roomId: activeRoom, img: reader.result });
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // CAMERA HANDLING MECHANICS
+        let cameraStream = null;
+        async function switchView(targetView) {
+            if (targetView === 'snaps') {
+                document.getElementById('chat-view').classList.add('hidden');
+                document.getElementById('snaps-view').classList.remove('hidden');
+                document.getElementById('snap-target-name').innerText = document.getElementById('chat-header-title').innerText;
+                try {
+                    cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    document.getElementById('camera-preview').srcObject = cameraStream;
+                } catch (err) {
+                    alert("Camera error!");
+                    switchView('chat');
+                }
+            } else {
+                document.getElementById('snaps-view').classList.add('hidden');
+                document.getElementById('chat-view').classList.remove('hidden');
+                if (cameraStream) {
+                    cameraStream.getTracks().forEach(t => t.stop());
+                    cameraStream = null;
+                }
+            }
+        }
+
+        function applyFilter(f) {
+            document.getElementById('camera-preview').className = `w-full h-full object-cover filter-${f}`;
+        }
+
+        function takeSnapshot() {
+            const video = document.getElementById('camera-preview');
+            const canvas = document.getElementById('snapshot-canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+            ctx.filter = getComputedStyle(video).filter;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            const base64Str = canvas.toDataURL('image/jpeg', 0.7);
+            socket.emit('send-msg', { roomId: activeRoom, img: base64Str });
+            alert("Snap sent!");
+            switchView('chat');
+        }
+
+        // SYNC UPDATES FROM THE SERVER
+        socket.on('sync-all', ({ convos, requests }) => {
+            renderConversationsList(convos);
+            renderRequestsSection(requests);
+        });
+        socket.on('sync-requests', (reqs) => renderRequestsSection(reqs));
+        socket.on('sync-remote-convo', ({ convos }) => renderConversationsList(convos));
+
+        function renderConversationsList(convos) {
+            const list = document.getElementById('convo-list');
+            list.innerHTML = `<div onclick="loadRoom('global', 'Global Chat')" class="p-4 bg-white rounded-2xl cursor-pointer font-bold text-sm mb-2 shadow-sm border border-gray-100 hover:bg-blue-50 transition">🌍 Global Chat</div>`;
+            friendsListCache = {};
+            
+            Object.keys(convos).forEach(key => {
+                const c = convos[key];
+                const div = document.createElement('div');
+                div.className = "p-4 bg-white rounded-2xl cursor-pointer hover:bg-blue-50 transition font-bold text-sm mb-2 shadow-sm border border-gray-100";
+                div.innerHTML = `<span>${c.type === 'group' ? '👥 ' : '👤 '}${c.name}</span>`;
+                div.onclick = () => loadRoom(key, c.name);
+                list.appendChild(div);
+                
+                if(c.type === 'private') {
+                    const friendId = key.split('_').find(id => id !== currentUser.id);
+                    friendsListCache[friendId] = c.name;
+                }
+            });
+        }
+
+        function renderRequestsSection(reqs) {
+            const area = document.getElementById('requests-area'); area.innerHTML = "";
+            Object.keys(reqs).forEach(fid => {
+                area.innerHTML += `
+                    <div class="p-3 bg-blue-50 rounded-2xl flex justify-between items-center mb-2 border border-blue-100">
+                        <span class="text-xs font-black text-blue-600">${reqs[fid].name}</span>
+                        <button onclick="socket.emit('accept-friend', {fid: '${fid}', fname: '${reqs[fid].name}'})" class="bg-blue-500 text-white px-4 py-1.5 rounded-full text-[9px] font-black">ACCEPT</button>
+                    </div>`;
+            });
+        }
+
+        function sendFriendRequest() {
+            const id = document.getElementById('friend-input').value;
+            if(id) socket.emit('friend-request', id);
+            document.getElementById('friend-input').value = "";
+        }
+
+        function openGroupModal() {
+            const sel = document.getElementById('group-friend-selector'); sel.innerHTML = "";
+            Object.keys(friendsListCache).forEach(id => {
+                sel.innerHTML += `<label class="flex items-center gap-3 p-3 bg-white border rounded-xl cursor-pointer"><input type="checkbox" value="${id}" class="g-member w-5 h-5 accent-blue-500"><span class="font-bold text-sm">${friendsListCache[id]}</span></label>`;
+            });
+            document.getElementById('group-modal').classList.remove('hidden');
+        }
+        function closeGroupModal() { document.getElementById('group-modal').classList.add('hidden'); }
+        function createGroup() {
+            const gName = document.getElementById('group-name-input').value;
+            const checked = Array.from(document.querySelectorAll('.g-member:checked')).map(el => el.value);
+            if(!gName || !checked.length) return alert("Fill out group parameters!");
+            socket.emit('create-group', { gName, members: checked });
+            closeGroupModal();
+        }
+
+        function toggleProfileModal() { document.getElementById('profile-modal').classList.toggle('hidden'); }
+
+        // REAL-TIME VIDEO PIPELINE VIA PEERJS
+        function setupPeerListeners() {
+            peer.on('call', async (call) => {
+                if (confirm("Incoming video call! Answer?")) {
+                    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                    document.getElementById('video-call-overlay').classList.remove('hidden');
+                    document.getElementById('local-video-call').srcObject = localStream;
+                    
+                    call.answer(localStream);
+                    call.on('stream', (remoteStream) => {
+                        document.getElementById('remote-video-call').srcObject = remoteStream;
+                    });
+                    currentPeerCall = call;
+                } else {
+                    call.close();
+                }
+            });
+        }
+
+        async function startCall() {
+            const friendId = activeRoom.split('_').find(id => id !== currentUser.id);
+            if (!friendId) return;
+
+            document.getElementById('video-call-overlay').classList.remove('hidden');
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            document.getElementById('local-video-call').srcObject = localStream;
+
+            const call = peer.call(friendId, localStream);
+            call.on('stream', (remoteStream) => {
+                document.getElementById('remote-video-call').srcObject = remoteStream;
+            });
+            currentPeerCall = call;
+        }
+
+        function endCall() {
+            document.getElementById('video-call-overlay').classList.add('hidden');
+            if (currentPeerCall) currentPeerCall.close();
+            if (localStream) {
+                localStream.getTracks().forEach(t => t.stop());
+                localStream = null;
+            }
+        }
+    </script>
+</body>
+</html>
